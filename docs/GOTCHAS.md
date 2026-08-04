@@ -85,10 +85,21 @@ in the Python traceback is the messenger, not the killer. Search the log
 - **cutlass c3x fp8 block scaled-mm** rejects sm_120 — use
   `--kernel-config '{"linear_backend": "triton"}'` plus the tuned configs
   (vLLM ships no tuned w8a8-block triton configs for RTX PRO 6000).
-- **TRTLLM MXFP4 MoE kernels** are capability-family-100 only. Native MXFP4
-  serving would land on marlin anyway — which is why `moe_backend: marlin`
-  on the NVFP4 checkpoint is mathematically identical to native MXFP4
-  serving (the checkpoint is a lossless remap; see README).
+- **TRTLLM MXFP4 MoE kernels** are capability-family-100 only, even though
+  sm_120 has FP4 tensor-core hardware: vLLM's
+  `fused_moe/experts/trtllm_mxfp4_moe.py` gates `is_supported_config` on
+  `is_device_capability_family(100)` (SM100/SM103 datacenter Blackwell), and
+  the flashinfer module it calls is literally
+  `gen_trtllm_gen_fused_moe_sm100_module` (prebuilt trtllm-gen cubins).
+  vLLM's mxfp4 backend priority is TRTLLM -> DeepGEMM (no sm_120 kernels) ->
+  Marlin, so serving the *original MXFP4 checkpoint* on sm_120 lands on
+  marlin W4A16 — the same kernels, on numerically identical weights, as this
+  repo's NVFP4 + `moe_backend: marlin` config (the checkpoint is a lossless
+  remap; see README). There is no faster native-MXFP4 path on sm_120 in this
+  stack. The only sm_120 path with fp4 *activations* is FLASHINFER_CUTLASS
+  NVFP4 W4A4 — measured slower at batch 1 (193 vs 202.7 decode; weight-
+  bandwidth-bound either way, activation quant adds overhead) and it is the
+  source of the converted-vs-reference quality delta.
 - **flashinfer sm_120 sparse-MLA decode kernels** exist only for top-k
   {128, 512, 1024} at page 64. The drafter's SWA uses top-k 256 — pad
   indices with -1 up to 512 (patch 8).
