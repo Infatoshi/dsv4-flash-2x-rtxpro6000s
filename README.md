@@ -4,6 +4,13 @@ Serving [DeepSeek-V4-Flash-0731-NVFP4](https://huggingface.co/MJPansa/DeepSeek-V
 (~176 GB of weights) on a single workstation with two RTX PRO 6000 Blackwell 96 GB
 GPUs (`sm_120`), TP=2, via a patched vLLM nightly.
 
+![live decode demo](demo/decode-demo.gif)
+
+*Live recording (`demo/stream_demo.py`): needle retrieval + 242 tok/s decode
+at a 30,765-token prompt, server-reported usage, warm prefix cache. Regenerate
+with `asciinema rec -c "python demo/stream_demo.py" demo.cast && agg demo.cast out.gif`
+after a `--prime-only` warmup run.*
+
 Headline numbers (batch-1 decode, temperature 0, measured with `bench/bench.py`):
 
 | config | decode tok/s |
