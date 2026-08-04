@@ -1,0 +1,38 @@
+--- a/vllm/tool_parsers/structural_tag_registry.py
++++ b/vllm/tool_parsers/structural_tag_registry.py
+@@ -110,8 +110,8 @@
+     if not tools or tool_choice == "none":
+         return None
+ 
+-    if tool_choice == "auto" and not _any_tool_strict(tools):
+-        return None
++    # Patch 11b: build the format grammar for non-strict tools too — the
++    # DSML tag structure is enforceable regardless of arg-schema strictness.
+ 
+     dumped_tools = [_dump_tool_for_xgrammar(tool) for tool in tools]
+     dumped_tool_choice = _dump_tool_choice_for_xgrammar(tool_choice)
+@@ -132,12 +132,23 @@
+         supported = sorted(SUPPORTED_STRUCTURAL_TAG_MODELS)
+         raise ValueError(f"Unknown format type: {model}, supported types: {supported}")
+ 
+-    return get_xgrammar_model_structural_tag(
++    tag = get_xgrammar_model_structural_tag(
+         model=model,
+         tools=dumped_tools,
+         tool_choice=dumped_tool_choice,
+         reasoning=reasoning,
+     )
++    # Patch 11c: DSV4-Flash rarely types the full "<|DSML|tool_calls>"
++    # opener unaided, so the triggered grammar never activates. Trigger on
++    # the bare DSML marker instead: the moment the model emits it, the
++    # grammar forces a well-formed tool_calls block. (Marker never appears
++    # legitimately in chat text outside tool calls.)
++    if model == "deepseek_v4":
++        fmt = getattr(tag, "format", None)
++        triggers = getattr(fmt, "triggers", None)
++        if triggers and any("tool_calls" in t for t in triggers):
++            fmt.triggers = ["<｜DSML｜"]
++    return tag
+ 
+ 
+ def _dump_tool_for_xgrammar(

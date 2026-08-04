@@ -1,0 +1,17 @@
+--- a/vllm/v1/attention/backends/mla/indexer.py
++++ b/vllm/v1/attention/backends/mla/indexer.py
+@@ -947,7 +947,13 @@
+                 seq_lens = seq_lens.unsqueeze(-1)
+ 
+             # DeepGEMM is required for the paged MQA logits on CUDA devices
+-            if current_platform.is_cuda() and has_deep_gemm():
++            # sm_120: vendored DeepGEMM has no kernels; the torch fallback in
++            # sparse_attn_indexer ignores schedule_metadata, so skip the build.
++            if (
++                current_platform.is_cuda()
++                and has_deep_gemm()
++                and not current_platform.is_device_capability_family(120)
++            ):
+                 self.scheduler_metadata_buffer[:] = get_paged_mqa_logits_metadata(
+                     seq_lens,
+                     self.kv_cache_spec.storage_block_size,

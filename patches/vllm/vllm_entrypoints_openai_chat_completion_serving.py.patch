@@ -1,0 +1,17 @@
+--- a/vllm/entrypoints/openai/chat_completion/serving.py
++++ b/vllm/entrypoints/openai/chat_completion/serving.py
+@@ -249,6 +249,14 @@
+                 chat_template_kwargs=chat_template_kwargs,
+                 model_config=self.model_config,
+             )
++        # Patch 11 (sm_120 DSV4 serving): wire structural-tag tool grammar
++        # into the chat path. Upstream never calls adjust_request here, so
++        # VLLM_ENFORCE_STRICT_TOOL_CALLING silently did nothing for chat
++        # completions. Absent tool_choice with tools behaves as auto.
++        if parser is not None:
++            if request.tool_choice is None and request.tools:
++                request.tool_choice = "auto"
++            request = parser.adjust_request(request)
+         result = await self.render_chat_request(request)
+         if isinstance(result, ErrorResponse):
+             return result

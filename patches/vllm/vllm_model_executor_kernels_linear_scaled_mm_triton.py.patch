@@ -1,0 +1,15 @@
+--- a/vllm/model_executor/kernels/linear/scaled_mm/triton.py
++++ b/vllm/model_executor/kernels/linear/scaled_mm/triton.py
+@@ -170,6 +170,12 @@
+         As: torch.Tensor,
+         Bs: torch.Tensor,
+     ) -> torch.Tensor:
++        # Triton cannot canonicalize float8_e8m0fnu pointers; upcast scale
++        # tensors (exponent-only floats, exact in fp32).
++        if As.dtype == torch.float8_e8m0fnu:
++            As = As.to(torch.float32)
++        if Bs.dtype == torch.float8_e8m0fnu:
++            Bs = Bs.to(torch.float32)
+         return torch.ops.vllm.w8a8_triton_block_scaled_mm_func(
+             A,
+             B,

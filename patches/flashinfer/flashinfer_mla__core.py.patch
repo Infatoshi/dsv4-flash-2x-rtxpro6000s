@@ -1,0 +1,43 @@
+--- a/flashinfer/mla/_core.py
++++ b/flashinfer/mla/_core.py
+@@ -400,6 +400,40 @@
+     primary_segment = segments[0]
+     extra_segment = segments[1] if len(segments) > 1 else None
+ 
++    # sm120 venv patch 8 (dsv4 dspark spec-decode): the decode kernels are only
++    # instantiated for topk in {128, 512, 1024}; the dspark drafter SWA path
++    # uses topk=256, which otherwise falls through to the prefill orchestrator
++    # and asserts on num_tokens <= 64. Pad indices with -1 (skipped by the
++    # kernel) up to the next instantiated topk and carry true lengths.
++    from ._sparse_mla_sm120 import _DECODE_MAX_TOKENS, _DECODE_DSV4_DISPATCH
++
++    _num_flat = batch_size * q_len_per_request
++    _topk0 = primary_segment.indices.shape[-1]
++    if (
++        head_dim == 512
++        and _num_flat <= _DECODE_MAX_TOKENS
++        and (num_heads, _topk0) not in _DECODE_DSV4_DISPATCH
++    ):
++        _cands = [
++            t for (h, t) in _DECODE_DSV4_DISPATCH if h == num_heads and t >= _topk0
++        ]
++        if _cands:
++            import dataclasses
++
++            _pad_to = min(_cands)
++            _idx = primary_segment.indices
++            _pad = _idx.new_full((*_idx.shape[:-1], _pad_to - _topk0), -1)
++            _lens = primary_segment.lengths
++            if _lens is None:
++                _lens = torch.full(
++                    (_num_flat,), _topk0, dtype=torch.int32, device=_idx.device
++                )
++            primary_segment = dataclasses.replace(
++                primary_segment,
++                indices=torch.cat([_idx, _pad], dim=-1),
++                lengths=_lens,
++            )
++
+     from ._sparse_mla_sm120 import _SparseMLAPagedAttentionRunner
+ 
+     query_flat = query.reshape(batch_size * q_len_per_request, num_heads, head_dim)

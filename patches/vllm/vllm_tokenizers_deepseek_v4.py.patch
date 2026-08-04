@@ -1,0 +1,27 @@
+--- a/vllm/tokenizers/deepseek_v4.py
++++ b/vllm/tokenizers/deepseek_v4.py
+@@ -39,6 +39,24 @@
+             if tools is not None and len(tools) > 0:
+                 messages.insert(0, {"role": "system"})
+                 messages[0]["tools"] = tools  # type: ignore[typeddict-unknown-key]
++                # Patch 12 (sm_120 DSV4 serving): recency-position format
++                # reminder. With long agentic system prompts the tool-format
++                # docs sit thousands of tokens from generation and DSV4-Flash
++                # drifts into invented tool markup; a reminder as the LAST
++                # system message keeps it on the DSML opener (which patch 11c
++                # then grammar-enforces).
++                _i = 1
++                while _i < len(messages) and messages[_i].get("role") == "system":
++                    _i += 1
++                messages.insert(_i, {
++                    "role": "system",
++                    "content": (
++                        "CRITICAL tool-call format: to invoke a tool you MUST "
++                        "begin the block with <｜DSML｜tool_calls> "
++                        "exactly. Never write <tool_call>, <invoke>, <bash> or "
++                        "any other markup for tool use."
++                    ),
++                })
+ 
+             reasoning_effort = kwargs.get("reasoning_effort")
+             if not isinstance(reasoning_effort, str):

@@ -1,0 +1,62 @@
+--- a/vllm/models/deepseek_v4/nvidia/dspark.py
++++ b/vllm/models/deepseek_v4/nvidia/dspark.py
+@@ -435,12 +435,36 @@
+                     self.quant_config, name, loaded_weight
+                 )
+ 
+-            # E8M0 expert scales: keep raw exponent bytes.
++            # E8M0 expert scales: keep raw exponent bytes (mega moe), or —
++            # venv patch 9 — requantize preserved-MXFP4 draft experts to the
++            # NVFP4 layout the fused-MoE module was built with. The 0731 NVFP4
++            # conversion only converted layers.*.ffn.experts; mtp.* experts keep
++            # the source MXFP4 format (packed fp4 + e8m0 group-32 scales,
++            # exponents in [-9,-1]). fp4 mantissas are identical, and
++            # 2^(e8m0+9) is exactly representable in e4m3, so requantization
++            # with weight_scale_2 = 2^-9 and input_scale = 1.0 is lossless.
+             if ".experts." in name:
+                 if (
+                     "weight_scale" in name
+                     and loaded_weight.dtype == torch.float8_e8m0fnu
+                 ):
++                    if use_mega_moe:
++                        loaded_weight = loaded_weight.view(torch.uint8)
++                    else:
++                        exp = loaded_weight.view(torch.uint8).to(torch.int32)
++                        s = torch.ldexp(
++                            torch.ones(exp.shape, dtype=torch.float32),
++                            exp - 127 + 9,
++                        )
++                        loaded_weight = s.to(
++                            torch.float8_e4m3fn
++                        ).repeat_interleave(2, dim=-1)
++                        self._dspark_mxfp4_requant = True
++                elif (
++                    not use_mega_moe
++                    and name.endswith(".weight")
++                    and loaded_weight.dtype == torch.int8
++                ):
+                     loaded_weight = loaded_weight.view(torch.uint8)
+                 for param_name, weight_name, expert_id, shard_id in expert_mapping:
+                     if weight_name not in name:
+@@ -487,6 +511,21 @@
+                 weight_loader(param, loaded_weight)
+                 loaded_params.add(name)
+ 
++        if getattr(self, "_dspark_mxfp4_requant", False):
++            # venv patch 9 (cont.): global scales absent from the preserved
++            # MXFP4 checkpoint; values chosen to match the requantized block
++            # scales above.
++            for layer in self.model.layers:
++                experts = layer.ffn.experts
++                mod = getattr(experts, "routed_experts", experts)
++                for pn in ("w13_weight_scale_2", "w2_weight_scale_2"):
++                    if hasattr(mod, pn):
++                        getattr(mod, pn).data.fill_(2.0**-9)
++                        loaded_params.add(pn)
++                for pn in ("w13_input_scale", "w2_input_scale"):
++                    if hasattr(mod, pn):
++                        getattr(mod, pn).data.fill_(1.0)
++                        loaded_params.add(pn)
+         self._finalize_moe()
+         logger.info_once("DSpark draft model loaded: %d params", len(loaded_params))
+         return loaded_params

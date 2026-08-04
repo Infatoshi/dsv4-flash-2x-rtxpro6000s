@@ -1,0 +1,52 @@
+--- a/vllm/models/deepseek_v4/nvidia/flashinfer_sparse.py
++++ b/vllm/models/deepseek_v4/nvidia/flashinfer_sparse.py
+@@ -181,6 +181,24 @@
+         return _pad_to_supported_q_heads(num_heads)
+ 
+     def _o_proj(self, o: torch.Tensor, positions: torch.Tensor) -> torch.Tensor:
++        if torch.cuda.get_device_capability()[0] == 12:
++            # sm_120: vendored DeepGEMM ships no SM120 kernels, so fp8_einsum
++            # cannot run here. Use the portable inverse-RoPE + cached-bf16
++            # wo_a reference path (same math as the ROCm backend).
++            from vllm.v1.attention.ops.rocm_aiter_mla_sparse import (
++                rocm_inv_rope_einsum,
++            )
++
++            z = rocm_inv_rope_einsum(
++                self.rotary_emb,
++                o,
++                positions,
++                self.rope_head_dim,
++                self.n_local_groups,
++                self.o_lora_rank,
++                self.wo_a,
++            )
++            return self.wo_b(z.flatten(1))
+         return deep_gemm_fp8_o_proj(
+             o,
+             positions,
+@@ -556,6 +574,24 @@
+         return _pad_to_supported_q_heads(num_heads)
+ 
+     def _o_proj(self, o: torch.Tensor, positions: torch.Tensor) -> torch.Tensor:
++        if torch.cuda.get_device_capability()[0] == 12:
++            # sm_120: vendored DeepGEMM ships no SM120 kernels, so fp8_einsum
++            # cannot run here. Use the portable inverse-RoPE + cached-bf16
++            # wo_a reference path (same math as the ROCm backend).
++            from vllm.v1.attention.ops.rocm_aiter_mla_sparse import (
++                rocm_inv_rope_einsum,
++            )
++
++            z = rocm_inv_rope_einsum(
++                self.rotary_emb,
++                o,
++                positions,
++                self.rope_head_dim,
++                self.n_local_groups,
++                self.o_lora_rank,
++                self.wo_a,
++            )
++            return self.wo_b(z.flatten(1))
+         return deep_gemm_fp8_o_proj(
+             o,
+             positions,
