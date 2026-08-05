@@ -25,6 +25,7 @@ done
 
 echo "== new files"
 cp -v new-files/dsv4_sm120_ops.py "$SP/"
+cp -v new-files/dsv4_sm120_prefill.py "$SP/"
 cp -v new-files/configs/*.json "$SP/vllm/model_executor/layers/quantization/utils/configs/"
 
-echo "done. Verify: $SP/../..../bin/python -c 'import dsv4_sm120_ops'"
+echo "done. Verify: $SP/../..../bin/python -c 'import dsv4_sm120_ops, dsv4_sm120_prefill'"

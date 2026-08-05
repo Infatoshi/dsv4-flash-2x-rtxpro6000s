@@ -70,6 +70,38 @@ streams' onboarding preempts it, and shows 73-78 tok/s instead of 100-110.
 Short runs (256 gens) sit entirely inside the ramp and read misleadingly low.
 Measure steady-state with 1024+ token generations.
 
+## Prefill indexer kernel (patch 13)
+
+The Lightning Indexer scores every query chunk against the *entire* KV prefix
+(that global scoring is what makes top-512 selection possible, and it is the
+one quadratic term in prefill). The original sm_120 route was a chunked torch
+fallback, bandwidth-bound on an unfused `[H, M, N]` fp32 intermediate —
+~9-20 TFLOPS. Patch 13 replaces it with a fused triton kernel: fp8 `tl.dot`
+into fp32 accumulators, `k_scale` folded through the relu
+(`relu(x*s) = s*relu(x)`, `s >= 0`), head reduction and causal-window
+masking in-kernel, out-of-window tiles skipped entirely.
+
+Per-op times on one RTX PRO 6000 (CUDA events, 3+ warmup, 10+ reps or 200 ms
+minimum per cell; M = query chunk, N = KV length, 32 heads/rank; raw data and
+harness in `bench/prefill/`):
+
+| M | N | fallback | triton kernel | speedup |
+|---|---|---|---|---|
+| 2048 | 8,192 | 6.8 ms | 0.18 ms | 37x |
+| 2048 | 32,768 | 52.8 ms | 0.77 ms | 68x |
+| 2048 | 102,400 | 167.1 ms | 2.44 ms | 68x |
+| 2048 | 262,144 | 450.4 ms | 6.34 ms | 71x |
+| 2048 | 500,000 | 929.9 ms | 12.30 ms | 76x |
+
+Geomean over the full 20-cell grid (M 256-4096 x N 8k-500k): **61x**.
+Accuracy: ~5e-7 relative error vs an fp32 reference (the kernel accumulates
+in fp32; the old fallback itself ran bf16). Sustained-load numbers: the 600 W
+power cap sags clocks ~3-5%, so a hand-written CUDA/mma kernel (also in
+`bench/prefill/`, tied within ~1% on production shapes) and the triton kernel
+are indistinguishable under load; triton ships because it needs no `nvcc` at
+serve time. Compute rate: ~830 TFLOPS fp8 on the inner GEMM cold — about 94%
+of what cuBLAS `_scaled_mm` reaches on the same shapes on this GPU.
+
 ## Long context
 
 Only a few of the 43 layers are full-attention (the rest are SWA-128), so KV
@@ -79,11 +111,16 @@ original window).
 - 512k x 2 seqs fits **with** CUDA graphs, no spec decode: 838k-token KV pool.
   (The drafter + its graphs cost 4.6 GiB and cap max len at ~427k.)
 - 1M x 1 seq fits eager (1.54x headroom).
-- Real 502,639-token request served end-to-end: prefill 18.3 min
-  (458 tok/s average; 1,725 tok/s at 100k depth — indexer cost is quadratic),
-  decode 95 tok/s at 100k depth, 66 tok/s at 500k.
-- Prefill at the 256k marlin config: 2,964 tok/s at 44.5k depth
-  (chunked prefill, 2048-token chunks).
+- Real 504,381-token request served end-to-end (512k config, cold cache,
+  needle retrieved): **prefill 116 s = 4,339 tok/s average** with the patch-13
+  indexer kernel. Before the kernel, the same request took 18.3 min
+  (458 tok/s average; 1,725 tok/s at 100k depth) — the chunked torch fallback
+  made the indexer's quadratic term dominate everything past ~50k depth.
+  Decode: 95 tok/s at 100k depth, 66 tok/s at 500k (unchanged; decode was
+  never indexer-fallback-bound).
+- Prefill at the 256k marlin config with the kernel: ~4,600 tok/s cold at 31k
+  depth (needle-verified 3/3 after the swap; the fallback managed ~2,964 tok/s
+  at 44.5k).
 
 ## KV pool sizes (fp8 KV, block 256)
 

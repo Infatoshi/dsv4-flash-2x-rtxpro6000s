@@ -22,8 +22,10 @@ touch shared code paths, so they are no-ops on other architectures.
 for it: vendored DeepGEMM (zero sm_120 kernels), cutlass c3x fp8 block
 scaled-mm (rejects the arch), and TRTLLM MXFP4 MoE (capability-family-100
 only). Patches 1-7 route around those; 8-9 fix the speculative drafter;
-11-12 fix tool calling; the stride fix inside patch 7's kernel is a
-correctness bug that cost us the longest debugging session of the project.
+11-12 fix tool calling; 13 replaces the prefill-indexer fallback with a fused
+triton kernel (~75x at 500k context); the stride fix inside patch 7's kernel
+is a correctness bug that cost us the longest debugging session of the
+project.
 
 ## The set
 
@@ -33,8 +35,7 @@ correctness bug that cost us the longest debugging session of the project.
 | 2 | `vllm/model_executor/kernels/linear/scaled_mm/triton.py` | Upcast e8m0 scales to fp32 (triton 3.7 `KeyError` on the e8m0 dtype). |
 | 3 | `vllm/models/deepseek_v4/nvidia/flashinfer_sparse.py` | Route both `_o_proj` variants to `rocm_inv_rope_einsum` on sm_120. |
 | 4 | `vllm/v1/attention/backends/mla/indexer.py` | Skip DeepGEMM schedule-metadata build on sm_120. |
-| 5/6 | `vllm/model_executor/layers/sparse_attn_indexer.py` | Prefill/decode indexer logits -> torch reference on sm_120 (DeepGEMM kernels absent). |
-| 5b | same file | Chunk the prefill torch fallback over 64-query slices — the `[H, M, N]` fp32 einsum intermediate OOMs at 16-stream chunked prefill. |
+| 5/6 | `vllm/model_executor/layers/sparse_attn_indexer.py` | Route prefill/decode indexer logits off DeepGEMM on sm_120 (kernels absent). Prefill now calls the fused triton kernel in `new-files/dsv4_sm120_prefill.py` (patch 13); decode uses the patch-7 kernel. |
 | 7 | same file + `new-files/dsv4_sm120_ops.py` | Decode `next_n>=1` indexer logits -> custom capture-safe triton kernel (`fp8_paged_mqa_logits_triton`), verified 3e-7 rel vs reference. **Contains the page-stride fix** — see below. |
 | 8 | `flashinfer/mla/_core.py` | Pad sparse-MLA decode indices with `-1` up to the next instantiated top-k. The DSpark drafter uses top-k 256; flashinfer's sm_120 decode kernels are only built for top-k {128, 512, 1024} at page 64. Verified bit-exact vs native dispatch. |
 | 9 | `vllm/models/deepseek_v4/nvidia/dspark.py` | `load_weights`: `mtp.*` drafter experts ship in **preserved MXFP4** (e8m0 group-32 scales, exponents -9..-1) while the module is built NVFP4 — the loader renames `mtp.* -> model.layers.*` so the quant-config exclusion never matches. Requantize scales `e4m3 = 2^(e8m0+9)` group-16 (lossless), `weight_scale_2 = 2^-9`, `input_scale = 1.0`. Without this, drafts are NaN and acceptance is exactly 0%. |
@@ -42,6 +43,7 @@ correctness bug that cost us the longest debugging session of the project.
 | 11b | `vllm/tool_parsers/structural_tag_registry.py` | Build the grammar for non-strict tools too (many clients send `strict: None`). |
 | 11c | same file | Trigger the grammar on the bare `<|DSML|>` token instead of the full `<\|DSML\|tool_calls>` opener the model rarely types unaided under long prompts. |
 | 12 | `vllm/tokenizers/deepseek_v4.py` | Append a recency-position tool-format reminder as the last system message when tools are present (long prompts drift the opener). |
+| 13 | `sparse_attn_indexer.py` + `new-files/dsv4_sm120_prefill.py` | Fused triton kernel for the prefill Lightning-Indexer logits (`fp8_mqa_logits`), replacing the chunked torch fallback that materialized an unfused `[H, M, N]` fp32 intermediate. fp8 `tl.dot` with fp32 accumulation, `k_scale` hoisted out of the relu (`relu(x*s) = s*relu(x)` for `s >= 0`), causal-window tiles skipped. 930 ms -> 12.3 ms at M=2048 / N=500k on this hardware (75.6x; geomean 61x across the shape grid), rel err ~5e-7 vs an fp32 reference. This is the kernel that turned a 502k-token prefill from ~18 min into minutes — see docs/BENCHMARKS.md. |
 
 New files (not diffs):
 
@@ -50,6 +52,12 @@ New files (not diffs):
   fp8 value bytes, then block_size fp32 scales); note in-file warning that
   vLLM's own `fp8_paged_mqa_logits_torch` `next_n>1` branch assumes a
   different layout.
+- `new-files/dsv4_sm120_prefill.py` -> site-packages root. Fused triton
+  prefill-indexer kernel (patch 13). Asserts contiguity on every input —
+  fail loudly rather than read garbage (see the page-stride bug below for
+  why that paranoia is earned). Development harness, an equivalent
+  hand-written CUDA kernel (tied within noise), and raw per-shape results
+  live in `bench/prefill/`.
 - `new-files/configs/*.json` ->
   `vllm/model_executor/layers/quantization/utils/configs/`. Tuned triton
   w8a8-block GEMM configs for RTX PRO 6000 Blackwell (vLLM ships none for this

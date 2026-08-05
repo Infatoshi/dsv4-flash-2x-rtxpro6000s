@@ -1,41 +1,30 @@
 --- a/vllm/model_executor/layers/sparse_attn_indexer.py
 +++ b/vllm/model_executor/layers/sparse_attn_indexer.py
-@@ -496,6 +496,34 @@
+@@ -496,6 +496,23 @@
                          cu_seqlen_ks,
                          cu_seqlen_ke,
                      )
 +                elif current_platform.is_device_capability_family(120):
-+                    # sm_120: vendored DeepGEMM has no kernels; use the torch
-+                    # reference (FP8 cache only).
++                    # sm_120: vendored DeepGEMM has no kernels; fused triton
++                    # kernel (dsv4_sm120_prefill), fp32 accumulation, ~75x
++                    # over the chunked torch fallback at long context.
 +                    assert q_scale_slice is None and not use_fp4_cache
-+                    from vllm.v1.attention.ops.rocm_aiter_mla_sparse import (
-+                        fp8_mqa_logits_torch,
++                    from dsv4_sm120_prefill import (
++                        fp8_mqa_logits as fp8_mqa_logits_sm120,
 +                    )
 +
-+                    # Chunk over query tokens: the torch ref materializes a
-+                    # [H, M, N] fp32 intermediate that OOMs at large prefill
-+                    # batches (16 streams x 2k chunk = 1.3+ GiB).
-+                    _w = weights[chunk.token_start : chunk.token_end]
-+                    _parts = []
-+                    _H = q_slice_cast.shape[1]
-+                    _N = k_quant_cast.shape[0]
-+                    _CH = max(1, min(64, (1 << 26) // max(1, _H * _N)))
-+                    for _i in range(0, q_slice_cast.shape[0], _CH):
-+                        _j = _i + _CH
-+                        _parts.append(
-+                            fp8_mqa_logits_torch(
-+                                q_slice_cast[_i:_j],
-+                                (k_quant_cast, k_scale_cast),
-+                                _w[_i:_j],
-+                                cu_seqlen_ks[_i:_j],
-+                                cu_seqlen_ke[_i:_j],
-+                            )
-+                        )
-+                    logits = _parts[0] if len(_parts) == 1 else torch.cat(_parts)
++                    logits = fp8_mqa_logits_sm120(
++                        q_slice_cast,
++                        k_quant_cast,
++                        k_scale_cast,
++                        weights[chunk.token_start : chunk.token_end],
++                        cu_seqlen_ks,
++                        cu_seqlen_ke,
++                    )
                  else:
                      logits = fp8_fp4_mqa_logits(
                          (q_slice_cast, q_scale_slice),
-@@ -599,6 +627,23 @@
+@@ -599,6 +616,23 @@
                  decode_metadata.schedule_metadata,
                  max_model_len,
              )

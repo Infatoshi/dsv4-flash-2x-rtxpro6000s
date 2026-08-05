@@ -22,14 +22,18 @@ Headline numbers (batch-1 decode, temperature 0, measured with `bench/bench.py`)
 | + DSpark speculative decode (k=3) | 193.2 |
 | + Marlin W4A16 MoE backend | **202.7** |
 
-Context up to 512k tokens with CUDA graphs (1M fits eager). A real 502,639-token
-request served end-to-end: 18.3 min prefill, 66 tok/s decode at 500k depth.
+Context up to 512k tokens with CUDA graphs (1M fits eager). A real 504,381-token
+request served end-to-end: **1.9 min prefill (4,339 tok/s average)**, 66 tok/s
+decode at 500k depth. Prefill was 18.3 min before patch 13 replaced the
+indexer fallback with a fused triton kernel (9.5x end-to-end; the indexer op
+itself is 61-76x — see `docs/BENCHMARKS.md` and `bench/prefill/`).
 
 **None of this works out of the box.** `sm_120` (Blackwell workstation) is not
 `sm_100` (B200/GB300): DeepGEMM has no sm_120 kernels, cutlass c3x fp8 block
 scaled-mm rejects the arch, TRTLLM MXFP4 MoE kernels are SM100-family-only, and
 flashinfer's sparse-MLA decode kernels only exist for specific top-k values.
-This repo is the complete recipe: 12 patches, tuned kernel configs, serve
+This repo is the complete recipe: 13 patches, tuned kernel configs, custom
+triton kernels for the sparse-attention indexer (decode and prefill), serve
 scripts for every configuration we validated, and the benchmark data.
 
 ## Contents
@@ -147,7 +151,8 @@ falls back silently — see gotchas (`.item()` calls,
 `expandable_segments:True`).
 
 **Chunked prefill (`--max-num-batched-tokens`).** 2048 for the 256k configs
-(prefill ~2,964 tok/s at 44.5k depth), 4096 where headroom allows. Larger
+(prefill ~4,600 tok/s at 31k depth with the patch-13 indexer kernel; the old
+fallback managed ~2,964 tok/s at 44.5k), 4096 where headroom allows. Larger
 single chunks OOM — weights leave no room.
 
 **Quantized KV (`--kv-cache-dtype fp8 --block-size 256`).** Required to fit
