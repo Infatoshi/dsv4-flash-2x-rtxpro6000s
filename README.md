@@ -43,7 +43,7 @@ patches/        unified diffs vs upstream (vLLM @ 74295e3bd, flashinfer 0.6.15.p
                 + new files (triton indexer kernel, tuned GEMM configs) + apply.sh
 scripts/        serve scripts, one per validated configuration
 bench/          benchmark harness + raw results (scoreboard.jsonl, sweep_results.jsonl)
-docs/           BENCHMARKS.md, GOTCHAS.md (war stories), TOOL-CALLING.md
+docs/           BENCHMARKS.md, GOTCHAS.md, TOOL-CALLING.md, 4X-RTX-PRO-6000.md
 ```
 
 ## Requirements
@@ -96,6 +96,7 @@ on this exact hardware. Pick by workload:
 | script | context | seqs | spec decode | MoE backend | decode tok/s | for |
 |---|---|---|---|---|---|---|
 | `serve_256k_marlin.sh` | 256k | 1 | dspark k=3 | marlin W4A16 | **202.7** | single-user agent/chat (recommended) |
+| `serve_256k_tp4.sh` | 256k | 1 | dspark k=3 | marlin W4A16 | one-shot 235 on 4x (not scoreboard) | 4x Server Edition, same flags, TP=4 |
 | `serve_256k_cutlass.sh` | 256k | 1 | dspark k=3 | cutlass W4A4 | 193 | same, fp4 activations (see below) |
 | `serve_32k_dspark_full.sh` | 32k | 2 | dspark k=3 | cutlass | 193.2 | short-context interactive |
 | `serve_64k_multiuser.sh` | 64k | 4 | none | cutlass | 109/stream | multi-user, no spec |
@@ -180,7 +181,8 @@ Documented fully in [docs/GOTCHAS.md](docs/GOTCHAS.md); short version:
 Full methodology and raw data in [docs/BENCHMARKS.md](docs/BENCHMARKS.md) —
 perf ladder with mean/std per step (`bench/scoreboard.jsonl`), concurrency x
 input-length x spec-vs-base sweep (`bench/sweep_results.jsonl`), long-context
-prefill/decode curves, and drafter acceptance by content type.
+prefill/decode curves, and drafter acceptance by content type. 4x Server
+Edition bring-up (2026-08-21): [docs/4X-RTX-PRO-6000.md](docs/4X-RTX-PRO-6000.md).
 
 ## Tool calling / agent harnesses
 

@@ -73,6 +73,24 @@ multi-user without spec decode. Proper fix: pad/clamp top-k indices when
 `kv_len < index_topk` in the fallback runner (or add tuned configs for the
 small shapes).
 
+This is not “run two autotune tactics in one launch.” The sm120 sparse-MLA
+cubins are specialized on `(heads, topk, page)`. Different tuned params =
+different cubin. The pooling trick is to make every decode look like the
+instantiated shape:
+
+1. Clamp/pad indices (`-1` for OOB / short KV) and pass `topk_length = kv_len`.
+   The tuned kernel already treats `-1` as invalid; `SparseMlaDecodeV3Runner`
+   does not.
+2. Dummy KV pages so every seq has `kv_len >= 512` (two `block_size=256` pages).
+3. Pad batch `T` to a captured FULL-graph size with masked dummy queries.
+4. Do not mix prefill and decode in one scheduler step.
+
+4x log (2026-08-21, TP=4, seqs=16, no spec): `No tuned config covers
+sparse_mla_sm120_decode_dsv4` at batch 16/8/4/1, fallback
+`SparseMlaDecodeV3Runner tactic=-1` (“perf cliff”), then JIT during
+inference (`hc_prenorm_gemm_tilelang`, indexer topk, tool bitmask). Engine
+generation throughput sat at 72.9 tok/s. See `docs/4X-RTX-PRO-6000.md`.
+
 **Debugging note:** device-side asserts are asynchronous — the kernel named
 in the Python traceback is the messenger, not the killer. Search the log
 *upward* for the `Assertion ... failed` lines from the CUDA runtime.
@@ -131,3 +149,28 @@ in the Python traceback is the messenger, not the killer. Search the log
 - Temperature-0 nondeterminism run-to-run is real and harmless: prefill
   split-KV reduction order jitters. Don't chase bit-identical outputs across
   runs, compare content.
+
+## 6. 4x / already-patched venv
+
+- **`apply.sh` is not always idempotent.** `--forward` skips reversed hunks,
+  but offset hunks on `sparse_attn_indexer.py` can still apply on a tree that
+  already has patches 5-7/13. On 2026-08-21 that file grew 34,944 → 36,599
+  bytes (`Hunk succeeded` / offset). If you see that instead of `Reversed
+  (or previously applied)`, restore the file from the known-good venv.
+- **Pinned nightly wheel rotates off.** `0.26.1rc1.dev303+g74295e3bd` was
+  gone from `wheels.vllm.ai/nightly` on 2026-08-21. Copy the patched
+  `vllm` + `flashinfer` + `dsv4_sm120_*.py` from a working venv, or build
+  vLLM at commit `74295e3bd`.
+- **`torchvision` is a hard import** in this vLLM cut. Workers die after
+  weight load with `No module named 'torchvision'` if you only installed
+  `torch` + `triton`.
+- **Claude Code is the wrong client.** omp OpenAI (`…/v1`, model
+  `dsv4-flash`) is how anvil talks to this stack. Pointing
+  `ANTHROPIC_BASE_URL` at vLLM `/v1/messages` returns 200 and then Flash
+  parrots Claude Code's stop protocol.
+- **Verda 50 GB OS volume cannot hold the 176 GB checkpoint.** Extra NVMe
+  attaches only while the VM is shutdown. tmpfs dies on reboot.
+
+4x serve notes and the TP=4 script: `docs/4X-RTX-PRO-6000.md`,
+`scripts/serve_256k_tp4.sh`.
+

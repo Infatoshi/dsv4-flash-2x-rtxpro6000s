@@ -126,6 +126,14 @@ original window).
 
 | config | pool (tokens) |
 |---|---|
-| 256k marlin + dspark | 418,136 |
-| 256k cutlass + dspark | ~389k (flashinfer workspace overhead) |
-| 512k x 2, no spec | ~838k |
+| 256k marlin + dspark (2x TP=2) | 418,136 |
+| 256k cutlass + dspark (2x TP=2) | ~389k (flashinfer workspace overhead) |
+| 512k x 2, no spec (2x TP=2) | ~838k |
+| 256k no spec (4x TP=4, 2026-08-21) | 3,008,608 |
+| 256k marlin + dspark (4x TP=4, 2026-08-21) | 4,695,313 |
+
+4x Server Edition bring-up, CUDA 13.0, same patched stack: see
+`docs/4X-RTX-PRO-6000.md`. Non-spec 4x engine log sat at 72.9 tok/s (1 req).
+DSpark k=3 one-shot warm decode (400 completion tokens / 1.703 s wall, not
+the scoreboard harness) was 234.8 tok/s. Do not mix those into the 2x ladder
+above.

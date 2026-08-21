@@ -11,7 +11,11 @@ Apply with:
 
 `apply.sh` runs `patch -p1` for every diff, drops `new-files/dsv4_sm120_ops.py`
 into site-packages root, and installs the tuned GEMM configs. Re-run after any
-venv reinstall. All patches are gated on
+venv reinstall. `--forward` skips reversed hunks; it does **not** stop offset
+hunks from applying again on an already-patched `sparse_attn_indexer.py`
+(2026-08-21: file grew 34,944 → 36,599 bytes). If you see `Hunk succeeded`
+instead of `Reversed (or previously applied)`, restore that file from the
+known-good venv. All patches are gated on
 `current_platform.is_device_capability_family(120)` (or equivalent) where they
 touch shared code paths, so they are no-ops on other architectures.
 

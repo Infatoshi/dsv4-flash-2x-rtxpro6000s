@@ -20,6 +20,7 @@ Map answers to scripts:
 | user says | script |
 |---|---|
 | just me / demo / unspecified | `serve_256k_marlin.sh` (default) |
+| 4x RTX PRO 6000 (server) | `serve_256k_tp4.sh` (same as marlin, TP=4; notes in docs/4X-RTX-PRO-6000.md) |
 | 2-4 users, interactive | `serve_32k_dspark_full.sh` (32k) or drop context expectations |
 | 5+ users | `serve_64k_multiuser.sh` (no spec decode — spec loses at high concurrency anyway) |
 | >256k context (long documents) | `serve_512k_longctx.sh` (512k x 2, no spec; 1M x 1 fits eager only) |
@@ -32,16 +33,22 @@ non-spec script.
 
 ## Setup sequence
 
-1. Preflight: `nvidia-smi` — need 2x RTX PRO 6000 Blackwell (sm_120, 96 GB),
-   both idle. Weights take 87.8 GB/GPU; a co-tenant process means failure at
-   KV allocation, not a graceful degrade.
+1. Preflight: `nvidia-smi` — 2x or 4x RTX PRO 6000 Blackwell (sm_120, 96 GB),
+   idle. 2x: weights ~87.8 GB/GPU. 4x TP=4: ~44 GB/GPU. A co-tenant process
+   means failure at KV allocation, not a graceful degrade. 4x notes:
+   `docs/4X-RTX-PRO-6000.md`.
 2. Pinned venv (see README Quickstart). Versions are exact, not minimums —
    the patches are diffs against vLLM commit `74295e3bd` and flashinfer
-   `0.6.15.post1`. If the pinned nightly wheel is gone, build vLLM from that
-   commit.
-3. `./patches/apply.sh <venv>/lib/python3.12/site-packages` — idempotent;
-   a `.rej` file means version drift, stop and report rather than hand-fixing.
-4. Download the checkpoint (README step 3), ~176 GB.
+   `0.6.15.post1`. If the pinned nightly wheel is gone, copy a known-good
+   patched `site-packages` or build vLLM from that commit. Also install
+   `torchvision` (this vLLM cut imports it).
+3. `./patches/apply.sh <venv>/lib/python3.12/site-packages` — intended
+   idempotent; a `.rej` file means version drift, stop and report. If a hunk
+   **succeeds with offset** on an already-patched tree (seen on
+   `sparse_attn_indexer.py`), restore that file from the known-good venv
+   rather than leaving the double patch.
+4. Download the checkpoint (README step 3), ~176 GB. A 50 GB cloud OS volume
+   cannot hold it; attach extra NVMe (Verda: VM must be shutdown to attach).
 5. Launch the chosen script inside tmux/screen (it `exec`s vLLM in the
    foreground). Boot takes ~5-7 min cold (weight load + CUDA graph capture);
    poll `GET /health` for 200 rather than watching the log.

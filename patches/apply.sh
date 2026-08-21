@@ -3,9 +3,11 @@
 #
 #   ./apply.sh /path/to/venv/lib/python3.12/site-packages
 #
-# Idempotent: --forward skips already-applied hunks. Diffs are against
-# vLLM 0.26.1rc1.dev303+g74295e3bd and flashinfer-python 0.6.15.post1;
-# a reject (.rej file) means your tree drifted from those versions.
+# Intended idempotent: --forward skips reversed hunks. Diffs are against
+# vLLM 0.26.1rc1.dev303+g74295e3bd and flashinfer-python 0.6.15.post1.
+# A .rej file means version drift. Offset hunks on an already-patched tree
+# can still apply (seen on sparse_attn_indexer.py, 2026-08-21) — if patch
+# says "Hunk succeeded" instead of "Reversed", restore that file.
 set -euo pipefail
 
 SP="${1:?usage: apply.sh /path/to/venv/lib/python3.12/site-packages}"
