@@ -43,6 +43,7 @@ MODEL="${MODEL:-$HOME/kernels/DeepSeek-V4-Flash-0731-NVFP4}"
 exec "$VENV/bin/vllm" serve "$MODEL" \
   --host 0.0.0.0 --port 8000 \
   --trust-remote-code --tokenizer-mode deepseek_v4 \
+  --reasoning-parser deepseek_v4 \
   --tensor-parallel-size 2 \
   --kernel-config '{"linear_backend": "triton"}' \
   --max-model-len 262144 --max-num-seqs 1 \
