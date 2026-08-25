@@ -145,6 +145,16 @@ decode) with a bigger KV pool (no flashinfer workspace). Marlin's large-M
 weakness never engages because chunked prefill caps M at
 `--max-num-batched-tokens` (2048).
 
+**Reasoning parser (`--reasoning-parser deepseek_v4`, default).** The serve
+scripts run vLLM's DeepSeek-V4 reasoning parser so the chat-completions
+endpoint emits reasoning as its own channel (`delta.reasoning`), not inline in
+`content`. Clients that render a "thinking" block (omp, the DeepSeek harness)
+get a collapsed reasoning section plus a clean final answer — the same
+contract as the official DeepSeek API. Without it the model's chain-of-thought
+leaks into the visible answer. The parser only extracts reasoning when the
+request asks the model to think (`thinking`/`reasoning_effort`); a request
+that doesn't enables thinking just returns `content`.
+
 **CUDA graphs (`--compilation-config '{"cudagraph_mode": "FULL_AND_PIECEWISE"}'`).**
 FULL_AND_PIECEWISE is worth +14 tok/s over piecewise-only (109 vs 95) and +28%
 on top of the spec-decode config (193 vs 165). Anything that breaks capture

@@ -116,4 +116,8 @@ venv or workers die with `No module named 'torchvision'` after weight load.
 ## Script
 
 `scripts/serve_256k_tp4.sh` — marlin + DSpark k=3 + FULL_AND_PIECEWISE,
-TP=4, seqs=1, batched tokens 2048. Override `CUDA_HOME` if the box is 13.2.
+TP=4, seqs=1, batched tokens 2048, plus `--reasoning-parser deepseek_v4`.
+The reasoning parser returns DeepSeek-V4 thinking as a separate channel
+(`delta.reasoning`), so a "thinking" block renders in clients (omp, the
+DeepSeek harness) and `content` stays clean — the same contract as the
+official DeepSeek API. Override `CUDA_HOME` if the box is 13.2.
